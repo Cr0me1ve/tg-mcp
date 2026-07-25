@@ -1,0 +1,35 @@
+{
+  "name": "tg-mcp",
+  "version": "0.1.0",
+  "description": "Ask one trusted person blocking questions through Telegram and continue Codex work.",
+  "author": {
+    "name": "Cr0me1ve",
+    "url": "https://github.com/Cr0me1ve"
+  },
+  "homepage": "https://github.com/Cr0me1ve/tg-mcp",
+  "repository": "https://github.com/Cr0me1ve/tg-mcp",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "mcp",
+    "telegram",
+    "human-in-the-loop"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Telegram Human Bridge",
+    "shortDescription": "Ask a trusted human without abandoning the task.",
+    "longDescription": "Connects Codex to one private Telegram chat for durable blocking questions, including isolated waiting in a subagent when other work can continue.",
+    "developerName": "Cr0me1ve",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "External communication"
+    ],
+    "defaultPrompt": [
+      "Connect my Telegram bot for human questions.",
+      "Ask me in Telegram if this task becomes blocked."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

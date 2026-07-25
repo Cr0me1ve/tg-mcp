@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "telegram-human-bridge": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/dist/server.mjs"
+      ],
+      "tool_timeout_sec": 86460
+    }
+  }
+}

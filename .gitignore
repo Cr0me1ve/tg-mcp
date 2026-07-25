@@ -1,0 +1,17 @@
+node_modules/
+coverage/
+.tg-mcp-data/
+*.tmp
+.DS_Store
+
+# The publishable plugin lives under plugins/tg-mcp. Keep the original local
+# working copy out of the public marketplace repository.
+/.codex-plugin/
+/.mcp.json
+/dist/
+/package-lock.json
+/package.json
+/scripts/
+/skills/
+/src/
+/test/

@@ -1,0 +1,27 @@
+{
+  "name": "tg-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Codex plugin and MCP server for asking one trusted person questions through Telegram.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "esbuild src/server.mjs --bundle --minify --platform=node --format=esm --target=node20 --outfile=dist/server.mjs",
+    "connect": "node scripts/connect-live.mjs",
+    "start": "node src/server.mjs",
+    "test": "node --test",
+    "smoke": "node scripts/mcp-smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  },
+  "overrides": {
+    "@hono/node-server": "2.0.11"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  }
+}

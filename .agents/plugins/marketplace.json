@@ -1,0 +1,20 @@
+{
+  "name": "tg-mcp",
+  "interface": {
+    "displayName": "Telegram Human Bridge"
+  },
+  "plugins": [
+    {
+      "name": "tg-mcp",
+      "source": {
+        "source": "local",
+        "path": "./plugins/tg-mcp"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
