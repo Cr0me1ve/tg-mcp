@@ -25,6 +25,13 @@ reply, and let the Codex task continue.
    logs. Secret storage must use restrictive file permissions.
 9. Telegram answers provide information only; they do not automatically grant
    sandbox permissions or authorize destructive actions.
+10. Multiple Codex chats and projects may ask questions concurrently through
+    the same bot. Exactly one local process may poll Telegram at a time,
+    shared state updates must be safe across processes, and every waiting
+    process must observe answers written by the poller process.
+11. When exactly one question is pending, a plain Telegram message answers it.
+    When two or more questions are pending, only a reply to the corresponding
+    Telegram question is accepted.
 
 ## Architecture
 
@@ -33,9 +40,14 @@ reply, and let the Codex task continue.
   - a skill describing when and how agents ask a human;
   - optional lifecycle hooks only where deterministic enforcement is useful.
 - The MCP server is a Node.js stdio server.
-- Telegram communication uses the Bot API with long polling.
+- Telegram communication uses the Bot API with long polling. A renewable
+  filesystem lease elects one poller across all local MCP processes, with
+  automatic failover when the leader exits.
 - A local JSON state file under `PLUGIN_DATA` (or an explicit data directory)
-  stores the bound chat and durable questions. Writes are atomic.
+  stores the bound chat and durable questions. Writes are atomic and guarded
+  by an inter-process lock.
+- Waiting MCP processes observe both local events and durable state changes, so
+  an answer consumed by another process wakes the correct Codex task.
 - MCP tools:
   - `telegram_connect`: validate and persist a bot token, start polling, and
     report that `/start` is required.
@@ -73,6 +85,9 @@ record the change here.
   human-escalation skill are available to new tasks in every project.
 - Publish the plugin in a public GitHub repository as a repo marketplace so
   any Codex user can add the marketplace and install `tg-mcp`.
+- Support concurrent questions from multiple Codex chats and projects through
+  one Telegram bot: require replies when several questions are pending, allow
+  plain text when only one is pending, and avoid competing Telegram pollers.
 
 ## Implementation status
 
@@ -89,3 +104,8 @@ record the change here.
 - The public marketplace is published at
   `https://github.com/Cr0me1ve/tg-mcp`; a fresh Git-backed Codex installation
   loads the bundled MCP without `node_modules` and exposes all five tools.
+- Version 0.2.0 coordinates concurrent Codex chats on one host with an
+  inter-process state lock, a single renewable Telegram poller lease with
+  failover, and durable answer observation by every waiting process. Plain
+  messages are accepted for one pending question; multiple pending questions
+  require replies to their corresponding Telegram messages.

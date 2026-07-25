@@ -40,6 +40,19 @@ The server's state directory can be overridden with `TG_MCP_DATA_DIR`; this is
 useful for isolated local testing. State includes sensitive connection material,
 so keep it private.
 
+## Concurrent local use
+
+Multiple Codex chats or projects may share one bot when they use the same data
+directory. A renewable filesystem lease elects one local Telegram poller and
+allows failover when it closes. An inter-process lock protects shared state;
+other waiting processes observe the durable answer written by the poller.
+
+With one pending question, ordinary Telegram text is accepted. With two or
+more, each answer must be a Telegram **Reply** to the matching bot question;
+otherwise the bot asks the user to reply to a question. This only coordinates
+processes on one host or shared data directory; it is not distributed
+coordination across machines.
+
 ## Package boundaries
 
 The server exposes five MCP tools: `telegram_connect`, `telegram_status`,

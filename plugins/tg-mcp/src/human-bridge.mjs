@@ -152,7 +152,7 @@ function buildTelegramQuestion(question) {
 
   sections.push(
     "",
-    "Ответьте reply-сообщением на этот вопрос. Ответ передастся агенту как информация, но не как разрешение на опасные действия.",
+    "Если ожидается несколько вопросов, ответьте reply-сообщением именно на этот вопрос. Если вопрос один, можно отправить обычный текст. Ответ передастся агенту как информация, но не как разрешение на опасные действия.",
   );
 
   const text = sections.join("\n");
@@ -168,9 +168,12 @@ export class HumanBridge extends EventEmitter {
   #idFactory;
   #pollTimeoutSeconds;
   #retryDelayMilliseconds;
+  #stateRefreshMilliseconds;
+  #pollLeaseRetryMilliseconds;
   #api = null;
   #pollAbortController = null;
   #pollTask = null;
+  #ownsPollerLease = false;
   #lastPollError = null;
 
   constructor({
@@ -180,6 +183,8 @@ export class HumanBridge extends EventEmitter {
     idFactory = randomUUID,
     pollTimeoutSeconds = 25,
     retryDelayMilliseconds = 1000,
+    stateRefreshMilliseconds = 250,
+    pollLeaseRetryMilliseconds = 250,
   }) {
     super();
     if (!store) {
@@ -191,6 +196,8 @@ export class HumanBridge extends EventEmitter {
     this.#idFactory = idFactory;
     this.#pollTimeoutSeconds = pollTimeoutSeconds;
     this.#retryDelayMilliseconds = retryDelayMilliseconds;
+    this.#stateRefreshMilliseconds = stateRefreshMilliseconds;
+    this.#pollLeaseRetryMilliseconds = pollLeaseRetryMilliseconds;
   }
 
   async initialize() {
@@ -201,7 +208,7 @@ export class HumanBridge extends EventEmitter {
 
     const api = this.#apiFactory(state.bot.token);
     this.#api = api;
-    this.#startPolling(api);
+    this.#startPolling();
     return this.status();
   }
 
@@ -254,7 +261,7 @@ export class HumanBridge extends EventEmitter {
 
     this.#api = api;
     this.#lastPollError = null;
-    this.#startPolling(api);
+    this.#startPolling();
 
     let status = await this.status();
     if (!status.bound && waitSeconds > 0) {
@@ -269,10 +276,14 @@ export class HumanBridge extends EventEmitter {
     const pendingQuestions = Object.values(state.questions).filter((question) =>
       ["sending", "pending"].includes(question.status),
     );
+    const polling =
+      this.#ownsPollerLease ||
+      (Boolean(state.bot.token) &&
+        await this.#store.isLeaseHeld("telegram-poller"));
 
     return {
       connected: Boolean(state.bot.token),
-      polling: Boolean(this.#pollTask),
+      polling,
       botUsername: state.bot.username,
       bound: Boolean(state.binding.chatId),
       boundDisplayName: state.binding.displayName,
@@ -370,36 +381,44 @@ export class HumanBridge extends EventEmitter {
   }
 
   async waitForAnswer(questionId, { waitSeconds = 3600, signal } = {}) {
-    const current = await this.#getQuestion(questionId);
-    if (!current) {
-      throw new Error(`Unknown question_id: ${questionId}`);
-    }
-    if (!["sending", "pending"].includes(current.status)) {
-      return questionSummary(current);
-    }
+    const deadline = Date.now() + Math.max(0, waitSeconds * 1000);
 
-    const answer = await waitForEvent({
-      emitter: this,
-      event: ANSWER_EVENT,
-      predicate: (question) =>
-        question.id === questionId &&
-        !["sending", "pending"].includes(question.status),
-      currentValue: () => this.#getQuestion(questionId),
-      timeoutSeconds: waitSeconds,
-      signal,
-    });
+    while (true) {
+      const current = await this.#getQuestion(questionId);
+      if (!current) {
+        throw new Error(`Unknown question_id: ${questionId}`);
+      }
+      if (!["sending", "pending"].includes(current.status)) {
+        return questionSummary(current);
+      }
 
-    if (answer) {
-      return questionSummary(answer);
+      const remainingMilliseconds = deadline - Date.now();
+      if (remainingMilliseconds <= 0) {
+        return {
+          ...questionSummary(current),
+          status: "waiting",
+        };
+      }
+
+      const answer = await waitForEvent({
+        emitter: this,
+        event: ANSWER_EVENT,
+        predicate: (question) =>
+          question.id === questionId &&
+          !["sending", "pending"].includes(question.status),
+        currentValue: () => this.#getQuestion(questionId),
+        timeoutSeconds:
+          Math.min(
+            remainingMilliseconds,
+            this.#stateRefreshMilliseconds,
+          ) / 1000,
+        signal,
+      });
+
+      if (answer) {
+        return questionSummary(answer);
+      }
     }
-
-    const latest = await this.#getQuestion(questionId);
-    return {
-      ...questionSummary(latest),
-      status: ["sending", "pending"].includes(latest.status)
-        ? "waiting"
-        : latest.status,
-    };
   }
 
   async cancelQuestion(questionId) {
@@ -582,15 +601,16 @@ export class HumanBridge extends EventEmitter {
     });
   }
 
-  #startPolling(api) {
+  #startPolling() {
     if (this.#pollTask) {
       return;
     }
 
     this.#pollAbortController = new AbortController();
     const { signal } = this.#pollAbortController;
-    this.#pollTask = this.#pollLoop(api, signal).finally(() => {
+    this.#pollTask = this.#pollLoop(signal).finally(() => {
       if (this.#pollAbortController?.signal === signal) {
+        this.#ownsPollerLease = false;
         this.#pollTask = null;
         this.#pollAbortController = null;
       }
@@ -610,10 +630,61 @@ export class HumanBridge extends EventEmitter {
     }
   }
 
-  async #pollLoop(api, signal) {
+  async #pollLoop(signal) {
+    while (!signal.aborted) {
+      const leaseController = new AbortController();
+      let releaseLease;
+      try {
+        releaseLease = await this.#store.tryAcquireLease("telegram-poller", {
+          onCompromised: (error) => {
+            this.#lastPollError = "poller_lease_lost";
+            leaseController.abort(error);
+          },
+        });
+
+        if (!releaseLease) {
+          await sleep(this.#pollLeaseRetryMilliseconds, signal).catch(
+            () => undefined,
+          );
+          continue;
+        }
+
+        this.#ownsPollerLease = true;
+        const state = await this.#store.read();
+        if (!state.bot.token) {
+          return;
+        }
+
+        const api = this.#apiFactory(state.bot.token);
+        this.#api = api;
+        const pollSignal = AbortSignal.any([
+          signal,
+          leaseController.signal,
+        ]);
+        await this.#pollAsLeader(api, state.bot.token, pollSignal);
+      } catch (error) {
+        if (signal.aborted || error?.name === "AbortError") {
+          return;
+        }
+        this.#lastPollError =
+          error?.code === 401
+            ? "telegram_auth_failed"
+            : "telegram_poll_failed";
+        await sleep(this.#retryDelayMilliseconds, signal).catch(() => undefined);
+      } finally {
+        this.#ownsPollerLease = false;
+        await releaseLease?.().catch(() => undefined);
+      }
+    }
+  }
+
+  async #pollAsLeader(api, botToken, signal) {
     while (!signal.aborted) {
       try {
         const state = await this.#store.read();
+        if (state.bot.token !== botToken) {
+          return;
+        }
         const updates = await api.getUpdates({
           offset: state.lastUpdateId + 1,
           timeout: this.#pollTimeoutSeconds,

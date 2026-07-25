@@ -17,6 +17,7 @@ export function makeAbortError() {
 export class FakeTelegramApi {
   sentMessages = [];
   deletedWebhook = false;
+  getUpdatesCalls = 0;
   nextMessageId = 100;
 
   constructor({ bot = { id: 123, username: "test_bridge_bot", is_bot: true } } = {}) {
@@ -33,6 +34,7 @@ export class FakeTelegramApi {
   }
 
   async getUpdates({ signal } = {}) {
+    this.getUpdatesCalls += 1;
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
         reject(makeAbortError());
