@@ -86,3 +86,6 @@ record the change here.
 - The plugin is installed and enabled from the personal Codex marketplace, so
   new tasks in every project can load both the MCP tools and the escalation
   skill.
+- The public marketplace is published at
+  `https://github.com/Cr0me1ve/tg-mcp`; a fresh Git-backed Codex installation
+  loads the bundled MCP without `node_modules` and exposes all five tools.
