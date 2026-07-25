@@ -44,8 +44,21 @@ credentials, or sensitive file contents in a repository, issue, or prompt.
 | `wait_for_answer` | Resumes a pending question after an interrupted call or restart. |
 | `cancel_question` | Cancels a pending question that is no longer needed. |
 
-Reply to the bot's question in Telegram to correlate the answer. A plain
-message is accepted only when exactly one question is pending.
+## Concurrent local use
+
+Several Codex chats or projects can ask the same trusted Telegram user at the
+same time when they share one local plugin data directory. A renewable
+filesystem lease elects exactly one local Telegram poller; if that process
+closes, another process takes over. Shared durable state is updated under an
+inter-process lock, and waiting processes notice an answer persisted by the
+poller.
+
+When exactly one question is pending, the user may answer with ordinary text.
+With two or more pending questions, every answer must be a Telegram **Reply**
+to its corresponding bot question; an unthreaded message makes the bot ask the
+user to choose a Reply instead. This is coordination among processes on one
+host (or a deliberately shared data directory), not distributed coordination
+between multiple machines.
 
 ## How Codex waits
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { HumanBridge } from "../src/human-bridge.mjs";
+import { StateStore } from "../src/state-store.mjs";
 import {
   configureStore,
   FakeTelegramApi,
@@ -10,7 +11,7 @@ import {
   waitFor,
 } from "./helpers.mjs";
 
-function makeBridge(store, api, { ids = ["q-1", "q-2", "q-3"] } = {}) {
+function makeBridge(store, api, { ids = ["q-1", "q-2", "q-3"], ...options } = {}) {
   return new HumanBridge({
     store,
     apiFactory: () => api,
@@ -18,6 +19,7 @@ function makeBridge(store, api, { ids = ["q-1", "q-2", "q-3"] } = {}) {
     now: () => "2026-07-25T12:00:00.000Z",
     pollTimeoutSeconds: 1,
     retryDelayMilliseconds: 1,
+    ...options,
   });
 }
 
@@ -145,6 +147,74 @@ test("plain reply answers the only pending question but requires a reply when th
   assert.equal(state.questions.a.status, "pending");
   assert.equal(state.questions.b.status, "pending");
   assert.ok(api.sentMessages.some((message) => message.text.includes("несколько ожидающих вопросов")));
+});
+
+test("a waiter observes a terminal answer written through another StateStore without a local event", async (t) => {
+  const waitingStore = await makeStore(t);
+  const answeringStore = new StateStore(waitingStore.filePath);
+  const bridge = makeBridge(waitingStore, new FakeTelegramApi(), {
+    stateRefreshMilliseconds: 5,
+  });
+  t.after(() => bridge.close());
+  await configureStore(waitingStore);
+  await addPendingQuestion(waitingStore, {
+    id: "external-answer",
+    telegramMessageId: 201,
+  });
+
+  let localAnswerEvents = 0;
+  bridge.on("question-answer", () => {
+    localAnswerEvents += 1;
+  });
+  const waiting = bridge.waitForAnswer("external-answer", { waitSeconds: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  await answeringStore.update((state) => {
+    const question = state.questions["external-answer"];
+    question.status = "answered";
+    question.answer = "Written by another process";
+    question.answeredAt = "2026-07-25T12:01:00.000Z";
+    question.answeredByUserId = "88";
+  });
+
+  const result = await Promise.race([
+    waiting,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("External answer was not refreshed.")), 250);
+    }),
+  ]);
+  assert.equal(result.status, "answered");
+  assert.equal(result.answer, "Written by another process");
+  assert.equal(localAnswerEvents, 0);
+});
+
+test("only one bridge long-polls a shared bot and another takes over after it closes", async (t) => {
+  const firstStore = await makeStore(t);
+  const secondStore = new StateStore(firstStore.filePath);
+  const firstApi = new FakeTelegramApi();
+  const secondApi = new FakeTelegramApi();
+  const firstBridge = makeBridge(firstStore, firstApi, {
+    pollLeaseRetryMilliseconds: 5,
+  });
+  const secondBridge = makeBridge(secondStore, secondApi, {
+    pollLeaseRetryMilliseconds: 5,
+  });
+  t.after(() => firstBridge.close());
+  t.after(() => secondBridge.close());
+  await configureStore(firstStore);
+
+  await Promise.all([firstBridge.initialize(), secondBridge.initialize()]);
+  await waitFor(
+    () => firstApi.getUpdatesCalls + secondApi.getUpdatesCalls === 1,
+  );
+
+  const [leaderBridge, followerApi] = firstApi.getUpdatesCalls === 1
+    ? [firstBridge, secondApi]
+    : [secondBridge, firstApi];
+  await leaderBridge.close();
+
+  await waitFor(() => followerApi.getUpdatesCalls === 1);
+  assert.equal(firstApi.getUpdatesCalls + secondApi.getUpdatesCalls, 2);
 });
 
 test("askHuman waits for and returns a correlated human answer without exposing token", async (t) => {
