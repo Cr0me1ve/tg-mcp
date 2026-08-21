@@ -133,3 +133,5 @@ record the change here.
   `./dist/server.mjs` path, so installed plugins expose all five tools without
   relying on unsupported `${PLUGIN_ROOT}` expansion. A clean Codex session
   successfully called `telegram_status` through the reinstalled plugin.
+- Version 0.3.0 packages the inline-answer UX, one-time binding guidance, and
+  installed MCP launch fix for the public marketplace release.
