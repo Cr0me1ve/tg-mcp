@@ -3,8 +3,9 @@
     "telegram-human-bridge": {
       "command": "node",
       "args": [
-        "${PLUGIN_ROOT}/dist/server.mjs"
+        "./dist/server.mjs"
       ],
+      "cwd": ".",
       "tool_timeout_sec": 86460
     }
   }

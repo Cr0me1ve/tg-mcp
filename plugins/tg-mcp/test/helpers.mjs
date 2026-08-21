@@ -16,6 +16,7 @@ export function makeAbortError() {
 
 export class FakeTelegramApi {
   sentMessages = [];
+  answeredCallbacks = [];
   deletedWebhook = false;
   getUpdatesCalls = 0;
   nextMessageId = 100;
@@ -58,6 +59,14 @@ export class FakeTelegramApi {
     this.sentMessages.push(message);
     return { message_id: message.message_id };
   }
+
+  async answerCallbackQuery(callbackQueryId, options = {}) {
+    this.answeredCallbacks.push({
+      callbackQueryId: String(callbackQueryId),
+      options,
+    });
+    return true;
+  }
 }
 
 export async function configureStore(store, {
@@ -96,6 +105,28 @@ export function telegramUpdate({
     message.reply_to_message = { message_id: replyToMessageId };
   }
   return { update_id: updateId, message };
+}
+
+export function telegramCallbackUpdate({
+  updateId = 1,
+  callbackQueryId = "callback-1",
+  chatId = 77,
+  userId = 88,
+  data = "option",
+  messageId = 500,
+} = {}) {
+  return {
+    update_id: updateId,
+    callback_query: {
+      id: callbackQueryId,
+      from: { id: userId, first_name: "Trusted", last_name: "Person" },
+      data,
+      message: {
+        message_id: messageId,
+        chat: { id: chatId, type: "private" },
+      },
+    },
+  };
 }
 
 export async function waitFor(check, { timeoutMilliseconds = 500 } = {}) {

@@ -6,6 +6,7 @@ import { StateStore } from "../src/state-store.mjs";
 import {
   configureStore,
   FakeTelegramApi,
+  telegramCallbackUpdate,
   makeStore,
   telegramUpdate,
   waitFor,
@@ -128,6 +129,124 @@ test("a reply is correlated to its Telegram question while other pending questio
   assert.equal(state.questions.second.answeredByUserId, "88");
 });
 
+test("suggested options use inline buttons and a callback answers its own question", async (t) => {
+  const store = await makeStore(t);
+  const api = new FakeTelegramApi();
+  const bridge = makeBridge(store, api, { ids: ["first", "second"] });
+  t.after(() => bridge.close());
+  await configureStore(store);
+  await bridge.initialize();
+
+  await bridge.askHuman({
+    question: "First choice?",
+    options: ["Keep", "Discard"],
+    waitSeconds: 0,
+  });
+  await bridge.askHuman({
+    question: "Second choice?",
+    options: ["Left", "Right"],
+    waitSeconds: 0,
+  });
+
+  const [firstMessage, secondMessage] = api.sentMessages.filter((message) =>
+    message.text.includes("choice?"),
+  );
+  const firstKeyboard = firstMessage.options.reply_markup.inline_keyboard;
+  const secondKeyboard = secondMessage.options.reply_markup.inline_keyboard;
+  assert.deepEqual(firstKeyboard.flat().map((button) => button.text), ["Keep", "Discard"]);
+  assert.deepEqual(secondKeyboard.flat().map((button) => button.text), ["Left", "Right"]);
+  assert.ok(firstKeyboard.flat().every((button) => typeof button.callback_data === "string"));
+  assert.equal(firstKeyboard.flat()[1].callback_data, "q:first:1");
+
+  await bridge.handleUpdate(
+    telegramCallbackUpdate({
+      data: firstKeyboard.flat()[1].callback_data,
+      messageId: firstMessage.message_id,
+    }),
+  );
+
+  const state = await store.read();
+  assert.equal(state.questions.first.status, "answered");
+  assert.equal(state.questions.first.answer, "Discard");
+  assert.equal(state.questions.second.status, "pending");
+  assert.deepEqual(api.answeredCallbacks, [{
+    callbackQueryId: "callback-1",
+    options: { text: "✅ Ответ принят." },
+  }]);
+});
+
+test("the sole pending question with options still accepts a custom text answer", async (t) => {
+  const store = await makeStore(t);
+  const api = new FakeTelegramApi();
+  const bridge = makeBridge(store, api, { ids: ["custom-answer"] });
+  t.after(() => bridge.close());
+  await configureStore(store);
+  await bridge.initialize();
+
+  await bridge.askHuman({
+    question: "Choose or explain",
+    options: ["Option A", "Option B"],
+    waitSeconds: 0,
+  });
+  await bridge.handleUpdate(
+    telegramUpdate({ text: "Neither option: use a custom approach." }),
+  );
+
+  const state = await store.read();
+  assert.equal(state.questions["custom-answer"].status, "answered");
+  assert.equal(
+    state.questions["custom-answer"].answer,
+    "Neither option: use a custom approach.",
+  );
+});
+
+test("invalid, oversized, and unauthorized callbacks leave pending questions untouched", async (t) => {
+  const store = await makeStore(t);
+  const api = new FakeTelegramApi();
+  const bridge = makeBridge(store, api, { ids: ["question"] });
+  t.after(() => bridge.close());
+  await configureStore(store);
+  await bridge.initialize();
+
+  await bridge.askHuman({
+    question: "Choose safely",
+    options: ["Safe", "Unsafe"],
+    waitSeconds: 0,
+  });
+  const sent = api.sentMessages.find((message) => message.text.includes("Choose safely"));
+  const validCallback = sent.options.reply_markup.inline_keyboard[0][0].callback_data;
+
+  await bridge.handleUpdate(
+    telegramCallbackUpdate({ updateId: 2, callbackQueryId: "invalid", data: "not-a-question" }),
+  );
+  await bridge.handleUpdate(
+    telegramCallbackUpdate({ updateId: 3, callbackQueryId: "oversized", data: "x".repeat(257) }),
+  );
+  await bridge.handleUpdate(
+    telegramCallbackUpdate({
+      updateId: 4,
+      callbackQueryId: "intruder",
+      userId: 999,
+      data: validCallback,
+      messageId: sent.message_id,
+    }),
+  );
+
+  const state = await store.read();
+  assert.equal(state.questions.question.status, "pending");
+  assert.equal(state.questions.question.answer, null);
+  assert.deepEqual(api.answeredCallbacks, [
+    {
+      callbackQueryId: "invalid",
+      options: { text: "Этот вопрос уже закрыт." },
+    },
+    {
+      callbackQueryId: "oversized",
+      options: { text: "Этот вопрос уже закрыт." },
+    },
+  ]);
+});
+
 test("plain reply answers the only pending question but requires a reply when there are several", async (t) => {
   const store = await makeStore(t);
   const api = new FakeTelegramApi();
@@ -146,7 +265,35 @@ test("plain reply answers the only pending question but requires a reply when th
   const state = await store.read();
   assert.equal(state.questions.a.status, "pending");
   assert.equal(state.questions.b.status, "pending");
-  assert.ok(api.sentMessages.some((message) => message.text.includes("несколько ожидающих вопросов")));
+  assert.equal(api.sentMessages.some((message) => message.text.includes("несколько ожидающих вопросов")), false);
+});
+
+test("binding sends correlation guidance once; repeat starts and ambiguous text do not repeat it", async (t) => {
+  const store = await makeStore(t);
+  const api = new FakeTelegramApi();
+  const bridge = makeBridge(store, api);
+  t.after(() => bridge.close());
+  await configureStore(store, {
+    binding: { chatId: null, userId: null, displayName: null, boundAt: null },
+  });
+  await bridge.initialize();
+
+  await bridge.handleUpdate(telegramUpdate({ text: "/start", messageId: 10 }));
+  const bindingNotice = api.sentMessages.at(-1);
+  assert.match(bindingNotice.text, /репла/i);
+  assert.match(bindingNotice.text, /опасн/i);
+
+  await bridge.handleUpdate(telegramUpdate({ updateId: 2, text: "/start", messageId: 11 }));
+  const repeatStart = api.sentMessages.at(-1);
+  assert.match(repeatStart.text, /уже подключ/i);
+  assert.equal(repeatStart.text.includes("репла"), false);
+
+  await addPendingQuestion(store, { id: "one", telegramMessageId: 201 });
+  await addPendingQuestion(store, { id: "two", telegramMessageId: 202 });
+  const sentBeforeAmbiguousText = api.sentMessages.length;
+  await bridge.handleUpdate(telegramUpdate({ updateId: 3, text: "Which one?", messageId: 12 }));
+
+  assert.equal(api.sentMessages.length, sentBeforeAmbiguousText);
 });
 
 test("a waiter observes a terminal answer written through another StateStore without a local event", async (t) => {

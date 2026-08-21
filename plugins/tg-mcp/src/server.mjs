@@ -139,7 +139,7 @@ export function createServer(bridge) {
           .array(z.string().min(1).max(500))
           .max(10)
           .default([])
-          .describe("Optional suggested answers."),
+          .describe("Optional suggested answers shown as Telegram buttons."),
         scope: z
           .enum(["entire_task", "workstream"])
           .default("entire_task")

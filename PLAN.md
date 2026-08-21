@@ -32,6 +32,15 @@ reply, and let the Codex task continue.
 11. When exactly one question is pending, a plain Telegram message answers it.
     When two or more questions are pending, only a reply to the corresponding
     Telegram question is accepted.
+12. Questions with suggested options show those options as an inline Telegram
+    keyboard. The trusted person may still answer any question with text.
+13. Reply-correlation and safety guidance is sent once when the trusted chat is
+    first bound with `/start`, rather than repeated under each question or in
+    follow-up reminder messages.
+14. After marketplace installation, every new local Codex task receives the
+    bridge's five MCP tools without a manual server launch or project-specific
+    configuration. Packaged server paths must resolve from the installed
+    plugin root.
 
 ## Architecture
 
@@ -40,6 +49,9 @@ reply, and let the Codex task continue.
   - a skill describing when and how agents ask a human;
   - optional lifecycle hooks only where deterministic enforcement is useful.
 - The MCP server is a Node.js stdio server.
+- The plugin MCP configuration starts the bundled server from the installed
+  plugin root using a relative path and an explicit plugin-root working
+  directory; it does not depend on host-side placeholder expansion.
 - Telegram communication uses the Bot API with long polling. A renewable
   filesystem lease elects one poller across all local MCP processes, with
   automatic failover when the leader exits.
@@ -57,8 +69,9 @@ reply, and let the Codex task continue.
   - `wait_for_answer`: resume waiting for a durable pending question after an
     interrupted MCP call or server restart.
   - `cancel_question`: cancel a pending question.
-- Telegram replies are correlated using reply-to-message metadata. When only
-  one question is pending, a plain message may answer that question.
+- Telegram replies are correlated using reply-to-message metadata, while
+  inline option callbacks identify the question directly. When only one
+  question is pending, a plain message may answer that question.
 
 ## Delivery plan
 
@@ -88,6 +101,10 @@ record the change here.
 - Support concurrent questions from multiple Codex chats and projects through
   one Telegram bot: require replies when several questions are pending, allow
   plain text when only one is pending, and avoid competing Telegram pollers.
+- Present suggested answers as inline Telegram buttons while preserving text
+  answers, and send usage guidance only on the first successful `/start` bind.
+- Make the installed plugin's MCP tools available automatically in every new
+  local Codex task, with an installed-package launch regression test.
 
 ## Implementation status
 
@@ -109,3 +126,10 @@ record the change here.
   failover, and durable answer observation by every waiting process. Plain
   messages are accepted for one pending question; multiple pending questions
   require replies to their corresponding Telegram messages.
+- Suggested answers are rendered as inline buttons, while custom text remains
+  available. Usage and safety guidance is sent once when `/start` first binds
+  the trusted chat and is not repeated under questions.
+- The packaged MCP server now starts from `cwd: "."` with the relative
+  `./dist/server.mjs` path, so installed plugins expose all five tools without
+  relying on unsupported `${PLUGIN_ROOT}` expansion. A clean Codex session
+  successfully called `telegram_status` through the reinstalled plugin.
