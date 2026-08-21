@@ -49,7 +49,19 @@ export class TelegramApi {
       {
         offset,
         timeout,
-        allowed_updates: ["message"],
+        allowed_updates: ["message", "callback_query"],
+      },
+      { signal },
+    );
+  }
+
+  async answerCallbackQuery(callbackQueryId, options = {}) {
+    const { signal, ...callbackOptions } = options;
+    return this.call(
+      "answerCallbackQuery",
+      {
+        callback_query_id: callbackQueryId,
+        ...callbackOptions,
       },
       { signal },
     );

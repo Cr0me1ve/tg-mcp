@@ -26,8 +26,8 @@ Available commands:
 | `npm run connect` | Performs a manual live Telegram round trip using configured local credentials. |
 
 The plugin configuration is [`.mcp.json`](.mcp.json); it runs
-`${PLUGIN_ROOT}/dist/server.mjs`. Build before testing an installed plugin
-locally.
+`./dist/server.mjs` from the installed plugin root. Build before testing an
+installed plugin locally.
 
 ## Local Telegram verification
 
@@ -47,11 +47,12 @@ directory. A renewable filesystem lease elects one local Telegram poller and
 allows failover when it closes. An inter-process lock protects shared state;
 other waiting processes observe the durable answer written by the poller.
 
+Suggested answers appear as inline buttons, and custom text remains available.
 With one pending question, ordinary Telegram text is accepted. With two or
-more, each answer must be a Telegram **Reply** to the matching bot question;
-otherwise the bot asks the user to reply to a question. This only coordinates
-processes on one host or shared data directory; it is not distributed
-coordination across machines.
+more, custom text must be a Telegram **Reply** to the matching bot question.
+This guidance is sent when `/start` first binds the trusted chat instead of
+being repeated with each question. Coordination applies to one host or shared
+data directory, not across machines.
 
 ## Package boundaries
 

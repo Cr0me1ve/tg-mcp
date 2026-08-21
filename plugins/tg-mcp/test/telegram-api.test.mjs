@@ -32,6 +32,34 @@ test("TelegramApi sends Bot API payloads through the injected fetch implementati
   });
 });
 
+test("TelegramApi receives callback queries and can acknowledge them", async () => {
+  const requests = [];
+  const api = new TelegramApi("123:top-secret", {
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, result: true }),
+      };
+    },
+  });
+
+  await api.getUpdates({ offset: 19, timeout: 7 });
+  await api.answerCallbackQuery("callback-id");
+
+  assert.equal(requests[0].url, "https://api.telegram.org/bot123:top-secret/getUpdates");
+  assert.deepEqual(JSON.parse(requests[0].init.body), {
+    offset: 19,
+    timeout: 7,
+    allowed_updates: ["message", "callback_query"],
+  });
+  assert.equal(requests[1].url, "https://api.telegram.org/bot123:top-secret/answerCallbackQuery");
+  assert.deepEqual(JSON.parse(requests[1].init.body), {
+    callback_query_id: "callback-id",
+  });
+});
+
 test("TelegramApi reports remote and network failures without leaking the bot token", async () => {
   const token = "123:very-secret-token";
   const remoteApi = new TelegramApi(token, {

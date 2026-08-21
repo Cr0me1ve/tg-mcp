@@ -10,7 +10,7 @@ import { z } from "zod";
 import { HumanBridge } from "./human-bridge.mjs";
 import { StateStore } from "./state-store.mjs";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 function dataDirectory(environment = process.env) {
   return path.resolve(
@@ -139,7 +139,7 @@ export function createServer(bridge) {
           .array(z.string().min(1).max(500))
           .max(10)
           .default([])
-          .describe("Optional suggested answers."),
+          .describe("Optional suggested answers shown as Telegram buttons."),
         scope: z
           .enum(["entire_task", "workstream"])
           .default("entire_task")

@@ -6,6 +6,15 @@ import { TelegramApi } from "./telegram-api.mjs";
 const ANSWER_EVENT = "question-answer";
 const BINDING_EVENT = "binding";
 const MAX_TELEGRAM_TEXT = 3900;
+const MAX_BUTTON_TEXT = 64;
+const ONBOARDING_MESSAGE = [
+  "✅ Telegram подключён к Codex. Этот бот теперь принимает ответы только из данного чата.",
+  "",
+  "Как отвечать на вопросы:",
+  "• Нажмите кнопку с готовым вариантом или отправьте свой ответ текстом.",
+  "• Если ожидается несколько вопросов, текстовый ответ отправляйте реплаем на нужный вопрос.",
+  "• Ответ передаётся агенту только как информация и не разрешает опасные действия.",
+].join("\n");
 
 function isoNow() {
   return new Date().toISOString();
@@ -142,23 +151,25 @@ function buildTelegramQuestion(question) {
     sections.push("", "Контекст:", question.context);
   }
 
-  if (question.options.length > 0) {
-    sections.push(
-      "",
-      "Варианты:",
-      ...question.options.map((option, index) => `${index + 1}. ${option}`),
-    );
-  }
-
-  sections.push(
-    "",
-    "Если ожидается несколько вопросов, ответьте reply-сообщением именно на этот вопрос. Если вопрос один, можно отправить обычный текст. Ответ передастся агенту как информация, но не как разрешение на опасные действия.",
-  );
-
   const text = sections.join("\n");
   return text.length <= MAX_TELEGRAM_TEXT
     ? text
     : `${text.slice(0, MAX_TELEGRAM_TEXT - 16)}\n…[сокращено]`;
+}
+
+function buildReplyMarkup(question) {
+  if (question.options.length === 0) {
+    return { force_reply: true, selective: true };
+  }
+
+  return {
+    inline_keyboard: question.options.map((option, index) => [
+      {
+        text: Array.from(option).slice(0, MAX_BUTTON_TEXT).join(""),
+        callback_data: `q:${question.id}:${index}`,
+      },
+    ]),
+  };
 }
 
 export class HumanBridge extends EventEmitter {
@@ -345,8 +356,8 @@ export class HumanBridge extends EventEmitter {
         state.binding.chatId,
         buildTelegramQuestion(normalizedQuestion),
         {
-          force_reply: true,
           protect_content: true,
+          reply_markup: buildReplyMarkup(normalizedQuestion),
           signal,
         },
       );
@@ -450,6 +461,11 @@ export class HumanBridge extends EventEmitter {
     }
 
     try {
+      if (update.callback_query) {
+        await this.#handleCallbackQuery(update.callback_query);
+        return;
+      }
+
       const message = update.message;
       if (!message?.chat || !message?.from) {
         return;
@@ -484,7 +500,7 @@ export class HumanBridge extends EventEmitter {
         if (didBind) {
           await this.#api?.sendMessage(
             chatId,
-            "✅ Telegram подключён к Codex. Этот бот теперь принимает ответы только из данного чата.",
+            ONBOARDING_MESSAGE,
             { protect_content: true },
           );
           this.emit(BINDING_EVENT, {
@@ -533,13 +549,6 @@ export class HumanBridge extends EventEmitter {
       }
 
       if (!question) {
-        if (pending.length > 1) {
-          await this.#api?.sendMessage(
-            chatId,
-            "Есть несколько ожидающих вопросов. Ответьте reply-сообщением на нужный вопрос.",
-            { protect_content: true },
-          );
-        }
         return;
       }
 
@@ -572,6 +581,77 @@ export class HumanBridge extends EventEmitter {
         state.lastUpdateId = Math.max(state.lastUpdateId, updateId);
       });
     }
+  }
+
+  async #handleCallbackQuery(callbackQuery) {
+    const callbackQueryId = callbackQuery?.id;
+    const callbackMessage = callbackQuery?.message;
+    const callbackUser = callbackQuery?.from;
+    if (
+      typeof callbackQueryId !== "string" ||
+      !callbackMessage?.chat ||
+      !callbackUser
+    ) {
+      return;
+    }
+
+    const state = await this.#store.read();
+    const chatId = String(callbackMessage.chat.id);
+    const userId = String(callbackUser.id);
+    if (
+      chatId !== String(state.binding.chatId) ||
+      userId !== String(state.binding.userId)
+    ) {
+      return;
+    }
+
+    const match = /^q:([^:]+):(\d+)$/.exec(callbackQuery.data ?? "");
+    const questionId = match?.[1];
+    const optionIndex = match ? Number(match[2]) : -1;
+    const question = questionId ? state.questions[questionId] : null;
+    const isCurrentQuestion =
+      question?.status === "pending" &&
+      String(question.telegramMessageId) === String(callbackMessage.message_id) &&
+      Number.isSafeInteger(optionIndex) &&
+      optionIndex >= 0 &&
+      optionIndex < question.options.length;
+
+    if (!isCurrentQuestion) {
+      await this.#api?.answerCallbackQuery(callbackQueryId, {
+        text: "Этот вопрос уже закрыт.",
+      });
+      return;
+    }
+
+    let answered = null;
+    await this.#store.update((draft) => {
+      const stored = draft.questions[questionId];
+      if (
+        !stored ||
+        stored.status !== "pending" ||
+        String(stored.telegramMessageId) !== String(callbackMessage.message_id) ||
+        optionIndex >= stored.options.length
+      ) {
+        return;
+      }
+      stored.status = "answered";
+      stored.answer = stored.options[optionIndex].slice(0, 12000);
+      stored.answeredAt = this.#now();
+      stored.answeredByUserId = userId;
+      answered = structuredClone(stored);
+    });
+
+    if (!answered) {
+      await this.#api?.answerCallbackQuery(callbackQueryId, {
+        text: "Этот вопрос уже закрыт.",
+      });
+      return;
+    }
+
+    this.emit(ANSWER_EVENT, answered);
+    await this.#api?.answerCallbackQuery(callbackQueryId, {
+      text: "✅ Ответ принят.",
+    });
   }
 
   async close() {

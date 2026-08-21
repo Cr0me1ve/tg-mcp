@@ -89,10 +89,12 @@ If a wait times out or is interrupted, reuse its `question_id` with
 `wait_for_answer`. Do not create duplicate Telegram questions. If the answer is
 no longer needed, call `cancel_question`.
 
-When exactly one Telegram question is pending, the person may answer with a
-plain message. When two or more questions are pending across Codex tasks, every
-answer must be a Telegram reply to the corresponding question message. The
-bridge correlates those replies by Telegram message ID.
+Suggested options appear as inline Telegram buttons, and the person may always
+write a custom text answer instead. When exactly one Telegram question is
+pending, a plain message answers it. When two or more questions are pending
+across Codex tasks, custom text answers must be Telegram replies to the
+corresponding question message. The bridge correlates buttons by question ID
+and text replies by Telegram message ID.
 
 A pending question means the affected work is still incomplete. Never report
 that workstream or the overall task as complete until the answer has been
